@@ -3,6 +3,7 @@
 import asyncio
 import aioredis
 from aiohttp import web, ClientSession
+from yarl import URL
 
 async def handle(request, session, redis):
     key = '{}:{}'.format(request.url.host, request.url.port)
@@ -16,11 +17,20 @@ async def handle(request, session, redis):
     headers['Host'] = '{}:{}'.format(backend_host, backend_port)
     data = request.content if request.has_body else None
     async with session.request(request.method, url,
+                               allow_redirects=False,
                                data=data,
                                headers=headers) as resp:
         out_resp = web.Response(status=resp.status)
         for k, v in resp.headers.items():
             out_resp.headers[k] = v
+
+        # Fix 'Location' header on redirect.
+        if int(resp.status / 100) == 3 and 'Location' in resp.headers:
+            url = URL(resp.headers['Location'])
+            if url.host:
+                url = url.with_host(request.url.host).with_port(request.url.port)
+                out_resp.headers['Location'] = str(url)
+
         await out_resp.prepare(request)
         while True:
             chunk = await resp.content.readany()
